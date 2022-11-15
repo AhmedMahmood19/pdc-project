@@ -1,4 +1,5 @@
 #include <iostream>
+#include <omp.h>
 #include <fstream>
 #include <vector>
 #include <sstream>
@@ -9,7 +10,7 @@
 using namespace std;
 
 #define FILEPATH "../scripts/studentrecords.csv"
-#define STOREPATH "../scripts/sortedserial.csv"
+#define STOREPATH "../scripts/sortedparallel.csv"
 
 int getNoOfRows(ifstream &originalfile, vector<streampos> &pos)
 {
@@ -157,14 +158,25 @@ void merge(vector<pair<string, int>> &column, int left, int mid, int right, stri
         i++;
     }
 }
-void mergesort(vector<pair<string, int>> &column, int left, int right, string dtype)
+void mergeSort(vector<pair<string, int>> &column, int left, int right, string dtype)
 {
-    if (right > left)
-    {
+    //If subarray can be further divided
+    if (right > left){
+        // Find the mid index and the size of the current subvector
         int mid = (right + left) / 2;
-        mergesort(column, left, mid, dtype);
-        mergesort(column, mid + 1, right, dtype);
-        merge(column, left, mid, right, dtype);
+        int n=(right - left) + 1;
+        // The vector "column" is shared by all threads, create a task only if the n is large enough
+        #pragma omp task shared(column) if (n > 10)
+        {
+            // cout<<"I am thread"<<omp_get_thread_num();
+            mergeSort(column, left, mid, dtype);
+        }
+        #pragma omp task shared(column) if (n > 10)
+            mergeSort(column, mid+1, right, dtype);
+        // Once the single thread has created all the threads, it will wait for all the tasks to be completed before continuing
+        // After which, only the single thread runs the merge function
+        #pragma omp taskwait
+            merge(column, left, mid, right, dtype);
     }
 }
 
@@ -176,7 +188,7 @@ void storeSortedFile(vector<pair<string, int>> &column, int &numOfRecs, vector<s
     
     // First we copy the header row from the original file to the the sorted file
     getline(original, buff);
-    sorted << buff << endl;
+    sorted << buff << "\n";
     // Iterate through the sorted column to get the correct order of the row numbers
     for (auto i:column)
     {
@@ -185,7 +197,7 @@ void storeSortedFile(vector<pair<string, int>> &column, int &numOfRecs, vector<s
 
         getline(original, buff);
         original.clear();
-        sorted<<buff<<endl;
+        sorted<<buff<<"\n";
     }
     original.close();
     sorted.close();
@@ -231,17 +243,25 @@ int main(int argc, char *argv[])
     // We don't need the file for now so we can close it
     originalfile.close();
     // Now we will sort the column
-    if (chosenAttrNum == 6)
+    // Explicitly disable dynamic teams
+    omp_set_dynamic(0);
+    //Only 4 threads will exist once we enter the parallel region and only one of them creates tasks
+    omp_set_num_threads(4);
+    #pragma omp parallel
     {
-        mergesort(column, 0, numOfRecs - 1, "int");
-    }
-    else if (chosenAttrNum == 7)
-    {
-        mergesort(column, 0, numOfRecs - 1, "float");
-    }
-    else
-    {
-        mergesort(column, 0, numOfRecs - 1, "string");
+        #pragma omp single
+            if (chosenAttrNum == 6)
+            {
+                mergeSort(column, 0, numOfRecs - 1, "int");
+            }
+            else if (chosenAttrNum == 7)
+            {
+                mergeSort(column, 0, numOfRecs - 1, "float");
+            }
+            else
+            {
+                mergeSort(column, 0, numOfRecs - 1, "string");
+            }
     }
     storeSortedFile(column, numOfRecs, pos);
     auto end = chrono::high_resolution_clock::now();
