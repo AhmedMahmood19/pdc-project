@@ -9,8 +9,8 @@
 #include <chrono>
 using namespace std;
 
-#define FILEPATH "../scripts/studentrecords.csv"
 #define STOREPATH "../scripts/sortedparallel.csv"
+string FILEPATH = "../datasets/12500studentrecords.csv";
 
 int getNoOfRows(ifstream &originalfile, vector<streampos> &pos)
 {
@@ -205,13 +205,20 @@ void storeSortedFile(vector<pair<string, int>> &column, int &numOfRecs, vector<s
 
 int main(int argc, char *argv[])
 {
+    // If ran through shell script we would start the timer instantly and use argv as FILEPATH
+    // otherwise timer would be started again after user picks an option
     auto start = chrono::high_resolution_clock::now();
-    string buff;
+    if (argc==3)
+    {
+        FILEPATH=argv[2];
+    }
+    
     // for each record, it stores the value of the chosen attribute and its line no., so it stores a whole column
     // Note: While comparing, we will cast string to other datatypes according to the option
     vector<pair<string, int>> column;
     //stores position of each row for quick random access
     vector<streampos> pos;          
+    string buff;
     int chosenAttrNum, numOfAttrs, numOfRecs;
     // Open the original unsorted file
     ifstream originalfile(FILEPATH);
@@ -226,16 +233,17 @@ int main(int argc, char *argv[])
     column.reserve(numOfRecs);
     // get the header row to display options to the user
     getline(originalfile, buff);
-    // If command line arguments are passed
-    if (argc > 1)
+    
+    if (argc == 3)
     {
-        // Use the command line argument as the option
+        // If ran through shell script we would use the command line argument as the option
         chosenAttrNum = chooseAttr(buff, numOfAttrs, atoi(argv[1]));
     }
-    else
+    else if (argc==1)
     {
-        // get the column number of the attribute to sort by from the user, this function also stores the number of attributes
+        // If ran through command line we would prompt for option and then start timer
         chosenAttrNum = chooseAttr(buff, numOfAttrs);
+        start = chrono::high_resolution_clock::now();
     }
     // We will now read from row 1 onwards (since we already read the header row when we used getline previously)
     // We will also store all the chosen attribute's values(a whole column), to sort the records by
@@ -264,8 +272,19 @@ int main(int argc, char *argv[])
             }
     }
     storeSortedFile(column, numOfRecs, pos);
+    
     auto end = chrono::high_resolution_clock::now();
     double timetaken = (chrono::duration_cast<chrono::nanoseconds>(end - start).count()) * 1e-9;
-    cout << fixed << timetaken << setprecision(9);
+    
+    if (argc==3)
+    {
+        // If ran through shell script then this would be stored in the log file
+        cout << numOfRecs << " , " <<fixed << timetaken << setprecision(9);
+    }
+    else if (argc==1)
+    {
+        // If ran through command line, this would be printed
+        cout << "Time Taken: " <<fixed << timetaken << setprecision(9);
+    }
     return 0;
 }

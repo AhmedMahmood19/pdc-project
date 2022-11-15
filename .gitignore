@@ -1,4 +1,4 @@
 .vscode
 my_env
 *.out
-/scripts/*.csv
+/scripts/sorted*.csv
