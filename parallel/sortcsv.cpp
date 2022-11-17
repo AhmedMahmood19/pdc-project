@@ -3,6 +3,7 @@
 #include <fstream>
 #include <vector>
 #include <sstream>
+#include <string>
 #include <limits>
 #include <cstdlib>
 #include <iomanip>
@@ -11,6 +12,10 @@ using namespace std;
 
 #define STOREPATH "../scripts/sortedparallel.csv"
 string FILEPATH = "../datasets/12500studentrecords.csv";
+
+ofstream threadlog;
+string filebuffer;
+int N=5000000;
 
 int getNoOfRows(ifstream &originalfile, vector<streampos> &pos)
 {
@@ -98,8 +103,28 @@ void getColumn(ifstream &originalfile, vector<pair<string, int>> &column, int &c
         currentRecordNum++;
     }
 }
+
+void printThreadStatus(double start, double stop, int left, int right, int tid)
+{
+    #pragma omp critical
+    {
+        //If appending a string(assume of size 100) will take up more space than we had reserved
+        if(N-filebuffer.size()<=100){
+            //Then we will write the string to a file and then clear the string
+            threadlog<<filebuffer;
+            filebuffer.clear();
+        }
+        filebuffer+="Thread "+to_string(tid)+" took "+to_string(stop-start)+"s to merge the chunk from index "+to_string(left)+" to "+to_string(right)+" of size "+to_string((right-left)+1)+"\n";
+    }
+}
+
 void merge(vector<pair<string, int>> &column, int left, int mid, int right, string dtype)
 {
+    double start;
+    if (threadlog.is_open())
+    {    
+        start=omp_get_wtime();
+    }
     // create left and right subvectors
     int leftSubN = (mid - left) + 1, rightSubN = (right - mid);
     vector<pair<string, int>> leftSub, rightSub;
@@ -157,7 +182,13 @@ void merge(vector<pair<string, int>> &column, int left, int mid, int right, stri
         righti++;
         i++;
     }
+    if (threadlog.is_open())
+    {    
+        double stop=omp_get_wtime();
+        printThreadStatus(start,stop,left,right,omp_get_thread_num());
+    }
 }
+
 void mergeSort(vector<pair<string, int>> &column, int left, int right, string dtype)
 {
     //If subarray can be further divided
@@ -165,16 +196,14 @@ void mergeSort(vector<pair<string, int>> &column, int left, int right, string dt
         // Find the mid index and the size of the current subvector
         int mid = (right + left) / 2;
         int n=(right - left) + 1;
-        // The vector "column" is shared by all threads, create a task only if the n is large enough
+
+        // The vector "column" is shared by all threads, create a task only if the n is large enough(n>10)
         #pragma omp task shared(column) if (n > 10)
-        {
-            // cout<<"I am thread"<<omp_get_thread_num();
             mergeSort(column, left, mid, dtype);
-        }
         #pragma omp task shared(column) if (n > 10)
             mergeSort(column, mid+1, right, dtype);
-        // Once the single thread has created all the threads, it will wait for all the tasks to be completed before continuing
-        // After which, only the single thread runs the merge function
+        // The current thread won't run merge() until the 2 tasks (created above) are completed
+        // While those tasks are not completed the current thread will execute tasks from the task pool 
         #pragma omp taskwait
             merge(column, left, mid, right, dtype);
     }
@@ -204,7 +233,7 @@ void storeSortedFile(vector<pair<string, int>> &column, int &numOfRecs, vector<s
 }
 
 int main(int argc, char *argv[])
-{
+{   
     // If ran through shell script we would start the timer instantly and use argv as FILEPATH
     // otherwise timer would be started again after user picks an option
     auto start = chrono::high_resolution_clock::now();
@@ -244,17 +273,21 @@ int main(int argc, char *argv[])
         // If ran through command line we would prompt for option and then start timer
         chosenAttrNum = chooseAttr(buff, numOfAttrs);
         start = chrono::high_resolution_clock::now();
+        // We would also create a thread log since we don't care about performance when not using the shell script
+        threadlog.open("threadlog.txt");
+        filebuffer.reserve(N);
     }
     // We will now read from row 1 onwards (since we already read the header row when we used getline previously)
     // We will also store all the chosen attribute's values(a whole column), to sort the records by
     getColumn(originalfile, column, chosenAttrNum, numOfAttrs, numOfRecs);
     // We don't need the file for now so we can close it
     originalfile.close();
-    // Now we will sort the column
-    // Explicitly disable dynamic teams
+
+    //The number of threads formed in the parallel region will be equal to the max number of threads specified
     omp_set_dynamic(0);
     //Only 4 threads will exist once we enter the parallel region and only one of them creates tasks
     omp_set_num_threads(4);
+    // Now we will sort the column
     #pragma omp parallel
     {
         #pragma omp single
@@ -278,12 +311,14 @@ int main(int argc, char *argv[])
     
     if (argc==3)
     {
-        // If ran through shell script then this would be stored in the log file
+        // If ran through the shell script then this would be returned to the shell
         cout << numOfRecs << " , " <<fixed << timetaken << setprecision(9);
     }
     else if (argc==1)
     {
-        // If ran through command line, this would be printed
+        // If ran through command line
+        threadlog<<filebuffer;
+        threadlog.close();
         cout << "Time Taken: " <<fixed << timetaken << setprecision(9);
     }
     return 0;
